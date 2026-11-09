@@ -55,8 +55,8 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 passport.use(new SteamStrategy({
-    returnURL: 'http://localhost:5000/auth/steam/return',
-    realm: 'http://localhost:5000/',
+    returnURL: 'https://dbd-mmr.onrender.com/auth/steam/return',
+    realm: 'https://dbd-mmr.onrender.com/',
     apiKey: STEAM_API_KEY
   },
   async (identifier, profile, done) => {
@@ -114,20 +114,29 @@ function calculateChange(match) {
 app.use(express.static(path.join(__dirname, 'frontend')));
 
 // Все остальные запросы, которые не попали в API, отправляют index.html (для SPA)
-app.get('//*', (req, res) => {
+app.get('/index.html', (req, res) => {
   res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
+});
+
+// Вместо проблемного app.get('*'), используем middleware в самом конце
+app.use((req, res, next) => {
+  if (req.method === 'GET' && !req.path.startsWith('/api')) {
+    res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
+  } else {
+    next();
+  }
 });
 
 // Авторизация Steam
 app.get('/auth/steam', passport.authenticate('steam'));
 app.get('/auth/steam/return', passport.authenticate('steam', { failureRedirect: '/' }), (req, res) => {
-  res.redirect('http://localhost:5173'); // Перенаправляем на фронтенд (Vite по умолчанию)
+  res.redirect('https://dbd-mmr.onrender.com'); // Перенаправляем на основной домен
 });
 
 // Выход
 app.get('/auth/logout', (req, res) => {
   req.logout(() => {
-    res.redirect('http://localhost:5173');
+    res.redirect('https://dbd-mmr.onrender.com');
   });
 });
 
