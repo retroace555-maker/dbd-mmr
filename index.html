@@ -33,13 +33,13 @@
 
                     <!-- Блок Авторизации -->
                     <div v-if="!currentUser" class="ml-4">
-                        <a href="http://localhost:5000/auth/steam" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold text-sm transition flex items-center gap-2">
+                        <a href="/auth/steam" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold text-sm transition flex items-center gap-2">
                             <img src="https://community.cloudflare.steamstatic.com/public/images/signinwithsteam_english.png" class="h-4" alt="Steam">
                         </a>
                     </div>
                     <div v-else class="ml-4 flex items-center gap-3">
                         <span class="text-sm font-medium text-slate-300">Привет, <span class="text-white font-bold">{{ currentUser.nickname }}</span></span>
-                        <a href="http://localhost:5000/auth/logout" class="text-xs text-slate-500 hover:text-red-400 transition underline">Выйти</a>
+                        <a href="/auth/logout" class="text-xs text-slate-500 hover:text-red-400 transition underline">Выйти</a>
                     </div>
                 </div>
             </div>
@@ -90,7 +90,7 @@
             <div v-if="view === 'profile'" class="max-w-3xl mx-auto space-y-8">
                 <div v-if="!currentUser" class="bg-blue-900/30 p-6 rounded-2xl border border-blue-800 text-center">
                     <p class="text-blue-200 mb-4">Пожалуйста, авторизуйтесь через Steam, чтобы управлять своим профилем</p>
-                    <a href="http://localhost:5000/auth/steam" class="inline-block bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-bold transition">Войти через Steam</a>
+                    <a href="/auth/steam" class="inline-block bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-bold transition">Войти через Steam</a>
                 </div>
 
                 <div v-else class="bg-slate-900 p-8 rounded-3xl border border-slate-800 shadow-2xl">
@@ -139,13 +139,13 @@
             methods: {
                 async fetchLeaderboard() {
                     try {
-                        const res = await axios.get(`http://localhost:5000/api/leaderboard/${this.role}`);
+                        const res = await axios.get(`/api/leaderboard/${this.role}`);
                         this.players = res.data;
                     } catch (e) { console.error('Ошибка загрузки топа'); }
                 },
                 async checkAuth() {
                     try {
-                        const res = await axios.get('http://localhost:5000/api/me');
+                        const res = await axios.get('/api/me');
                         this.currentUser = res.data;
                     } catch (e) { this.currentUser = null; }
                 },
@@ -153,11 +153,10 @@
                     this.loading = true;
                     try {
                         // Теперь отправляем только токен, так как сервер знает нас по сессии Steam
-                        const res = await axios.post('http://localhost:5000/api/user/update', {
+                        const res = await axios.post('/api/user/update', {
                             token: this.token
                         });
                         this.currentUser.survivorMMR = res.data.survivorMMR;
-                        this.currentUser.killerMMR = res.//data.killerMMR; //’corrected this in logic
                         this.currentUser.killerMMR = res.data.killerMMR;
                         alert('MMR успешно обновлен!');
                         this.token = '';

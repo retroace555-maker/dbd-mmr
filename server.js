@@ -118,26 +118,9 @@ app.get('/index.html', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Вместо проблемного app.get('*'), используем middleware в самом конце
-app.use((req, res, next) => {
-  if (req.method === 'GET' && !req.path.startsWith('/api')) {
-    const filePath = path.join(__dirname, 'index.html');
-    res.sendFile(filePath, (err) => {
-      if (err) {
-        console.error('Ошибка отправки файла:', filePath, err);
-        res.status(404).send('Файл index.html не найден в корне сервера');
-      }
-    });
-  } else {
-    next();
-  }
-});
-
 // Авторизация Steam
 app.get('/auth/steam', passport.authenticate('steam'));
 
-// Авторизация Steam
-app.get('/auth/steam', passport.authenticate('steam'));
 app.get('/auth/steam/return', passport.authenticate('steam', { failureRedirect: '/' }), (req, res) => {
   res.redirect('https://dbd-mmr.onrender.com'); // Перенаправляем на основной домен
 });
@@ -219,6 +202,20 @@ app.get('/api/leaderboard/:role', async (req, res) => {
 app.get('/api/me', (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Не авторизован' });
   res.json(req.user);
+});
+
+app.use((req, res, next) => {
+  if (req.method === 'GET' && !req.path.startsWith('/api') && !req.path.startsWith('/auth')) {
+    const filePath = path.join(__dirname, 'index.html');
+    res.sendFile(filePath, (err) => {
+      if (err) {
+        console.error('Ошибка отправки файла:', filePath, err);
+        res.status(404).send('Файл index.html не найден в корне сервера');
+      }
+    });
+  } else {
+    next();
+  }
 });
 
 app.listen(PORT, () => console.log(`🚀 Сервер с поддержкой Steam запущен на порту ${PORT}`));
