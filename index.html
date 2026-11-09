@@ -99,9 +99,9 @@
                     </h2>
 
                     <div class="mb-8 p-4 bg-slate-800 rounded-xl border border-slate-700">
-                        <p class="text-sm text-slate-400 mb-3">Для обновления MMR нам всё ещё нужен ваш Bearer Token с сайта статистики.</p>
+                        <p class="text-sm text-slate-400 mb-3">Вход через Steam не получает токен BHVR. Вставьте токен авторизации Behavior с сайта статистики; можно с префиксом Bearer, ссылку на страницу вставлять не нужно.</p>
                         <form @submit.prevent="updateMMR" class="flex gap-2">
-                            <input v-model="token" class="flex-1 bg-slate-900 border border-slate-700 rounded-lg p-3 focus:ring-2 ring-red-600 outline-none transition" placeholder="Вставьте Bearer Token здесь..." required>
+                            <input v-model="token" class="flex-1 bg-slate-900 border border-slate-700 rounded-lg p-3 focus:ring-2 ring-red-600 outline-none transition" placeholder="Токен Behavior" required>
                             <button :disabled="loading" class="bg-red-600 hover:bg-red-700 px-6 py-3 rounded-lg font-bold transition disabled:opacity-50">
                                 {{ loading ? '...' : 'Обновить' }}
                             </button>

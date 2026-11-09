@@ -136,7 +136,8 @@ app.get('/auth/logout', (req, res) => {
 app.post('/api/user/update', async (req, res) => {
   // Если пользователь залогинен через Steam, берем его из сессии
   const user = req.user || await User.findOne({ steamId: req.body.steamId });
-  const token = req.body.token || user?.behaviorToken;
+  const rawToken = req.body.token || user?.behaviorToken || '';
+  const token = String(rawToken).trim().replace(/^Bearer\s+/i, '');
 
   if (!token) return res.status(400).json({ error: 'Требуется токен Behavior' });
 
