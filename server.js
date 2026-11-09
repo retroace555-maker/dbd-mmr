@@ -114,7 +114,7 @@ function calculateChange(match) {
 app.use(express.static(path.join(__dirname, 'frontend')));
 
 // Все остальные запросы, которые не попали в API, отправляют index.html (для SPA)
-app.get('*', (req, res) => {
+app.get('(.*)', (req, res) => {
   res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
 });
 
