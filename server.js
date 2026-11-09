@@ -110,22 +110,31 @@ function calculateChange(match) {
 
 // 5. ЭНДПОИНТЫ
 
-// Раздача статических файлов фронтенда
-app.use(express.static(path.join(__dirname, 'frontend')));
+// Раздача статических файлов из корня
+app.use(express.static(__dirname));
 
 // Все остальные запросы, которые не попали в API, отправляют index.html (для SPA)
 app.get('/index.html', (req, res) => {
-  res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 // Вместо проблемного app.get('*'), используем middleware в самом конце
 app.use((req, res, next) => {
   if (req.method === 'GET' && !req.path.startsWith('/api')) {
-    res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
+    const filePath = path.join(__dirname, 'index.html');
+    res.sendFile(filePath, (err) => {
+      if (err) {
+        console.error('Ошибка отправки файла:', filePath, err);
+        res.status(404).send('Файл index.html не найден в корне сервера');
+      }
+    });
   } else {
     next();
   }
 });
+
+// Авторизация Steam
+app.get('/auth/steam', passport.authenticate('steam'));
 
 // Авторизация Steam
 app.get('/auth/steam', passport.authenticate('steam'));
