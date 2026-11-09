@@ -5,6 +5,7 @@ const cors = require('cors');
 const passport = require('passport');
 const SteamStrategy = require('passport-steam').Strategy;
 const session = require('express-session');
+const path = require('path');
 
 const app = express();
 app.use(express.json());
@@ -16,7 +17,7 @@ app.use(cors({
 // --- КОНФИГУРАЦИЯ ---
 const STEAM_API_KEY = '53F8644F8ADFF075F3ABFB20E3156983';
 const SESSION_SECRET = 'dbd_mmr_secret_key_123'; // В идеале сменить на случайную строку
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
 // 1. ПОДКЛЮЧЕНИЕ К БАЗЕ ДАННЫХ
 mongoose.connect('mongodb+srv://retroace555_db_user:yPPqobg76LKrufjs@dbdmmr.9c5bmhf.mongodb.net/dbd_mmr')
@@ -108,6 +109,14 @@ function calculateChange(match) {
 }
 
 // 5. ЭНДПОИНТЫ
+
+// Раздача статических файлов фронтенда
+app.use(express.static(path.join(__dirname, 'frontend')));
+
+// Все остальные запросы, которые не попали в API, отправляют index.html (для SPA)
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
+});
 
 // Авторизация Steam
 app.get('/auth/steam', passport.authenticate('steam'));
