@@ -89,8 +89,8 @@ passport.deserializeUser(async (id, done) => {
 
 // 4. ЛОГИКА РАСЧЕТА MMR
 const MMR_CONFIG = {
-  survivor: { escape: 20, death: -20 },
-  killer: { kills4: 25, kills3: 10, kills2: 0, kills1: -15, kills0: -25 }
+  survivor: { escape: 15, death: -15 },
+  killer: { kills4: 25, kills3: 15, kills2: -15, kills1: -25, kills0: -25 }
 };
 
 function calculateChange(match) {
@@ -137,16 +137,11 @@ app.post('/api/user/update', async (req, res) => {
   // Если пользователь залогинен через Steam, берем его из сессии
   const user = req.user || await User.findOne({ steamId: req.body.steamId });
   const rawToken = req.body.token || user?.behaviorToken || '';
-  const token = String(rawToken).trim().replace(/^Bearer\s+/i, '');
+  const token = String(rawToken).replace(/^\s*Bearer\s+/i, '').replace(/\s+/g, '');
 
   if (!token) return res.status(400).json({ error: 'Требуется токен Behavior' });
 
   try {
-    if (user) {
-        user.behaviorToken = token;
-        await user.save();
-    }
-
     const API_URL = 'https://account-backend.bhvr.com/player-stats/match-history/games/dbd/providers/bhvr?lang=en&limit=100';
     const response = await axios.get(API_URL, {
       headers: { 'authorization': `Bearer ${token}`, 'Referer': 'https://stats.deadbydaylight.com/' }
@@ -175,6 +170,7 @@ app.post('/api/user/update', async (req, res) => {
     }
 
     if (user) {
+      user.behaviorToken = token;
         user.survivorMMR += totalSurvChange;
         user.killerMMR += totalKillChange;
         user.lastUpdate = new Date();
@@ -183,8 +179,15 @@ app.post('/api/user/update', async (req, res) => {
 
     res.json({ message: 'MMR обновлен', survivorMMR: user?.survivorMMR, killerMMR: user?.killerMMR });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Ошибка обновления данных.' });
+    const bhvrStatus = error.response?.status;
+    if (bhvrStatus === 401) {
+      return res.status(401).json({ error: 'BHVR отклонил токен: он истек или недействителен. Получите новый токен.' });
+    }
+    if (bhvrStatus === 403) {
+      return res.status(403).json({ error: 'BHVR запретил запрос. Проверьте, что токен получен в аккаунте Behavior.' });
+    }
+    console.error('Ошибка запроса к BHVR:', bhvrStatus || error.code || error.message);
+    res.status(502).json({ error: 'Не удалось получить историю матчей от BHVR. Попробуйте позже.' });
   }
 });
 
