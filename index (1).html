@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DBD MMR | Global Statistics</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; }
+        .dbd-card {
+            background: linear-gradient(145deg, #1e293b, #0f172a);
+            border: 1px solid #334155;
+            transition: all 0.3s ease;
+        }
+        .dbd-card:hover { border-color: #ef4444; transform: translateY(-2px); }
+        .status-escaped { color: #4ade80; text-shadow: 0 0 10px rgba(74, 222, 128, 0.3); }
+        .status-dead { color: #f87171; text-shadow: 0 0 10px rgba(248, 113, 113, 0.3); }
+    </style>
+</head>
+<body class="text-slate-200">
+    <div id="app">
+        <!-- Навигация -->
+        <nav class="bg-slate-900 border-b border-slate-800 p-4 sticky top-0 z-50 shadow-xl">
+            <div class="max-w-6xl mx-auto flex justify-between items-center">
+                <div class="text-2xl font-black italic tracking-tighter text-red-600">DBD <span class="text-white">MMR</span></div>
+
+                <div class="flex gap-6 items-center">
+                    <button @click="view = 'leaderboard'" :class="view === 'leaderboard' ? 'text-red-500' : 'text-slate-400'" class="font-semibold hover:text-white transition">Лидерборд</button>
+                    <button @click="view = 'profile'" :class="view === 'profile' ? 'text-red-500' : 'text-slate-400'" class="font-semibold hover:text-white transition">Профиль</button>
+
+                    <!-- Блок Авторизации -->
+                    <div v-if="!currentUser" class="ml-4">
+                        <a href="/auth/steam" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold text-sm transition flex items-center gap-2">
+                            <img src="https://community.cloudflare.steamstatic.com/public/images/signinwithsteam_english.png" class="h-4" alt="Steam">
+                        </a>
+                    </div>
+                    <div v-else class="ml-4 flex items-center gap-3">
+                        <span class="text-sm font-medium text-slate-300">Привет, <span class="text-white font-bold">{{ currentUser.nickname }}</span></span>
+                        <a href="/auth/logout" class="text-xs text-slate-500 hover:text-red-400 transition underline">Выйти</a>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <main class="max-w-6xl mx-auto p-6">
+            <!-- СТРАНИЦА ЛИДЕРБОРДА -->
+            <div v-if="view === 'leaderboard'" class="space-y-8">
+                <div class="flex justify-between items-end">
+                    <div>
+                        <h1 class="text-4xl font-black uppercase italic">Глобальный Рейтинг</h1>
+                        <p class="text-slate-400">Лучшие игроки по версии DBD MMR</p>
+                    </div>
+                    <div class="flex bg-slate-900 p-1 rounded-xl border border-slate-800">
+                        <button @click="role = 'survivor'" :class="role === 'survivor' ? 'bg-blue-600 text-white' : 'text-slate-400'" class="px-6 py-2 rounded-lg transition font-bold">Сурвы</button>
+                        <button @click="role = 'killer'" :class="role === 'killer' ? 'bg-red-600 text-white' : 'text-slate-400'" class="px-6 py-2 rounded-lg transition font-bold">Маны</button>
+                    </div>
+                </div>
+
+                <div class="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/50 backdrop-blur-md">
+                    <table class="w-full text-left">
+                        <thead class="bg-slate-800 text-slate-300 uppercase text-xs font-bold">
+                            <tr>
+                                <th class="px-6 py-4">Место</th>
+                                <th class="px-6 py-4">Никнейм</th>
+                                <th class="px-6 py-4 text-right">Рейтинг MMR</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800">
+                            <tr v-for="(p, i) in players" :key="p.steamId" class="hover:bg-slate-800/50 transition cursor-default">
+                                <td class="px-6 py-4 font-mono">
+                                    <span v-if="i === 0" class="text-yellow-400 text-xl">🥇</span>
+                                    <span v-else-if="i === 1" class="text-slate-300 text-xl">🥈</span>
+                                    <span v-else-if="i === 2" class="text-orange-400 text-xl">🥉</span>
+                                    <span v-else>{{ i + 1 }}</span>
+                                </td>
+                                <td class="px-6 py-4 font-semibold">{{ p.nickname }}</td>
+                                <td class="px-6 py-4 text-right font-black" :class="role === 'survivor' ? 'text-blue-400' : 'text-red-400'">
+                                    {{ role === 'survivor' ? p.survivorMMR : p.killerMMR }}
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- СТРАНИЦА ПРОФИЛЯ -->
+            <div v-if="view === 'profile'" class="max-w-3xl mx-auto space-y-8">
+                <div v-if="!currentUser" class="bg-blue-900/30 p-6 rounded-2xl border border-blue-800 text-center">
+                    <p class="text-blue-200 mb-4">Пожалуйста, авторизуйтесь через Steam, чтобы управлять своим профилем</p>
+                    <a href="/auth/steam" class="inline-block bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-bold transition">Войти через Steam</a>
+                </div>
+
+                <div v-else class="bg-slate-900 p-8 rounded-3xl border border-slate-800 shadow-2xl">
+                    <h2 class="text-2xl font-bold mb-6 flex items-center gap-2">
+                        <span class="w-2 h-8 bg-red-600 rounded-full"></span> Профиль: {{ currentUser.nickname }}
+                    </h2>
+
+                    <div class="mb-8 p-4 bg-slate-800 rounded-xl border border-slate-700">
+                        <p class="mb-3 rounded-lg border border-amber-700 bg-amber-950/50 p-3 text-sm font-semibold text-amber-200">
+                            Важно: токен Behavior не обновляется автоматически. Регулярно вставляйте актуальный токен и нажимайте «Обновить», чтобы загрузить новые матчи и пересчитать рейтинг.
+                        </p>
+                        <p class="text-sm text-slate-400 mb-3">Вход через Steam не получает токен BHVR. Вставьте токен авторизации Behavior с сайта статистики; можно с префиксом Bearer, ссылку на страницу вставлять не нужно.</p>
+                        <form @submit.prevent="updateMMR" class="flex gap-2">
+                            <input v-model="token" class="flex-1 bg-slate-900 border border-slate-700 rounded-lg p-3 focus:ring-2 ring-red-600 outline-none transition" placeholder="Токен Behavior" required>
+                            <button :disabled="loading" class="bg-red-600 hover:bg-red-700 px-6 py-3 rounded-lg font-bold transition disabled:opacity-50">
+                                {{ loading ? '...' : 'Обновить' }}
+                            </button>
+                        </form>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="dbd-card p-6 rounded-3xl text-center">
+                            <div class="text-slate-500 text-xs uppercase font-black mb-2 tracking-widest">Survivor MMR</div>
+                            <div class="text-5xl font-black text-blue-400">{{ currentUser.survivorMMR || 1000 }}</div>
+                        </div>
+                        <div class="dbd-card p-6 rounded-3xl text-center">
+                            <div class="text-slate-500 text-xs uppercase font-black mb-2 tracking-widest">Killer MMR</div>
+                            <div class="text-5xl font-black text-red-400">{{ currentUser.killerMMR || 1000 }}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+        createApp({
+            data() {
+                return {
+                    view: 'leaderboard',
+                    role: 'survivor',
+                    players: [],
+                    currentUser: null,
+                    token: '',
+                    loading: false
+                }
+            },
+            methods: {
+                async fetchLeaderboard() {
+                    try {
+                        const res = await axios.get(`/api/leaderboard/${this.role}`);
+                        this.players = res.data;
+                    } catch (e) { console.error('Ошибка загрузки топа'); }
+                },
+                async checkAuth() {
+                    try {
+                        const res = await axios.get('/api/me');
+                        this.currentUser = res.data;
+                    } catch (e) { this.currentUser = null; }
+                },
+                async updateMMR() {
+                    this.loading = true;
+                    try {
+                        // Теперь отправляем только токен, так как сервер знает нас по сессии Steam
+                        const res = await axios.post('/api/user/update', {
+                            token: this.token
+                        });
+                        this.currentUser.survivorMMR = res.data.survivorMMR;
+                        this.currentUser.killerMMR = res.data.killerMMR;
+                        alert('MMR успешно обновлен!');
+                        this.token = '';
+                    } catch (e) {
+                        alert(e.response?.data?.error || 'Ошибка при обновлении. Проверьте токен.');
+                    } finally {
+                        this.loading = false;
+                    }
+                }
+            },
+            mounted() {
+                this.fetchLeaderboard();
+                this.checkAuth();
+            },
+            watch: {
+                role() { this.fetchLeaderboard(); }
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
