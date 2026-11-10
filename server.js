@@ -107,14 +107,17 @@ const MMR_CONFIG = {
 function calculateChange(match) {
   const p = match.playerStat || {};
   if (p.killerMatchStatus) {
-    const kills = p.killerMatchStatus.kills || 0;
+    const rawKills = p.killerMatchStatus.kills;
+    if (rawKills === undefined || rawKills === null || rawKills === '') return null;
+    const kills = Number(rawKills);
+    if (!Number.isInteger(kills) || kills < 0) return null;
     if (kills >= 4) return MMR_CONFIG.killer.kills4;
     if (kills === 3) return MMR_CONFIG.killer.kills3;
     if (kills === 2) return MMR_CONFIG.killer.kills2;
     if (kills === 1) return MMR_CONFIG.killer.kills1;
     return MMR_CONFIG.killer.kills0;
   } else {
-    const status = p.playerStatus?.id || '';
+    const status = String(p.playerStatus?.id || '').toUpperCase();
     return status.includes('ESCAPED') ? MMR_CONFIG.survivor.escape : MMR_CONFIG.survivor.death;
   }
 }
@@ -161,8 +164,16 @@ app.post('/api/user/update', async (req, res) => {
     });
 
     const matches = response.data;
+    if (!Array.isArray(matches)) {
+      return res.status(502).json({ error: 'BHVR вернул историю матчей в неожиданном формате.' });
+    }
+
     let totalSurvChange = 0;
     let totalKillChange = 0;
+    let survivorMatchesProcessed = 0;
+    let killerMatchesProcessed = 0;
+    let matchesWithUnknownKills = 0;
+    const matchesToSave = [];
 
     for (const match of matches) {
       const sourceMatchId = match.id || JSON.stringify(match);
@@ -174,16 +185,35 @@ app.post('/api/user/update', async (req, res) => {
       if (!alreadyProcessed) {
         const change = calculateChange(match);
         const isKiller = !!match.playerStat?.killerMatchStatus;
-        if (isKiller) totalKillChange += change;
-        else totalSurvChange += change;
-        await Match.create({
+        if (isKiller && change === null) {
+          matchesWithUnknownKills++;
+          continue;
+        }
+        matchesToSave.push({
             steamId: user.steamId,
             matchId,
             role: isKiller ? 'killer' : 'survivor',
             mmrChange: change,
             date: new Date()
         });
+        if (isKiller) {
+          totalKillChange += change;
+          killerMatchesProcessed++;
+        } else {
+          totalSurvChange += change;
+          survivorMatchesProcessed++;
+        }
       }
+    }
+
+    if (matchesWithUnknownKills > 0) {
+      return res.status(502).json({
+        error: `BHVR не вернул количество убийств для ${matchesWithUnknownKills} матч(ей). MMR не обновлён, чтобы не списать очки ошибочно.`
+      });
+    }
+
+    if (matchesToSave.length > 0) {
+      await Match.create(matchesToSave);
     }
 
     if (user) {
@@ -194,7 +224,16 @@ app.post('/api/user/update', async (req, res) => {
         await user.save();
     }
 
-    res.json({ message: 'MMR обновлен', survivorMMR: user?.survivorMMR, killerMMR: user?.killerMMR });
+    res.json({
+      message: 'MMR обновлен',
+      survivorMMR: user.survivorMMR,
+      killerMMR: user.killerMMR,
+      changes: { survivor: totalSurvChange, killer: totalKillChange },
+      processedMatches: {
+        survivor: survivorMatchesProcessed,
+        killer: killerMatchesProcessed
+      }
+    });
   } catch (error) {
     const bhvrStatus = error.response?.status;
     if (bhvrStatus === 401) {
