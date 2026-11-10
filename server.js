@@ -1,28 +1,28 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const axios = require('axios');
-const cors = require('cors');
 const passport = require('passport');
 const SteamStrategy = require('passport-steam').Strategy;
 const session = require('express-session');
+const { MongoStore } = require('connect-mongo');
 const path = require('path');
 
 const app = express();
+app.set('trust proxy', 1);
 app.use(express.json());
-app.use(cors({
-  origin: '*',
-  credentials: true
-}));
 
 // --- КОНФИГУРАЦИЯ ---
-const STEAM_API_KEY = '53F8644F8ADFF075F3ABFB20E3156983';
-const SESSION_SECRET = 'dbd_mmr_secret_key_123'; // В идеале сменить на случайную строку
+const STEAM_API_KEY = process.env.STEAM_API_KEY;
+const SESSION_SECRET = process.env.SESSION_SECRET;
+const { MONGODB_URI } = process.env;
+const APP_URL = (process.env.APP_URL || 'https://dbd-mmr.onrender.com').replace(/\/+$/, '');
 const PORT = process.env.PORT || 5000;
+const isProduction = process.env.NODE_ENV === 'production';
 
-// 1. ПОДКЛЮЧЕНИЕ К БАЗЕ ДАННЫХ
-mongoose.connect('mongodb+srv://retroace555_db_user:yPPqobg76LKrufjs@dbdmmr.9c5bmhf.mongodb.net/dbd_mmr')
-  .then(() => console.log('✅ Облачная база данных MongoDB Atlas подключена'))
-  .catch(err => console.error('❌ Ошибка подключения к Atlas:', err));
+if (!MONGODB_URI || !STEAM_API_KEY || !SESSION_SECRET) {
+  throw new Error('Не заданы обязательные переменные MONGODB_URI, STEAM_API_KEY и SESSION_SECRET');
+}
+
 
 // 2. СХЕМЫ ДАННЫХ
 const UserSchema = new mongoose.Schema({
@@ -49,14 +49,25 @@ const Match = mongoose.model('Match', MatchSchema);
 app.use(session({
   secret: SESSION_SECRET,
   resave: false,
-  saveUninitialized: true
+  saveUninitialized: false,
+  store: MongoStore.create({
+    mongoUrl: MONGODB_URI,
+    collectionName: 'sessions',
+    ttl: 60 * 60 * 24
+  }),
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: isProduction,
+    maxAge: 24 * 60 * 60 * 1000
+  }
 }));
 app.use(passport.initialize());
 app.use(passport.session());
 
 passport.use(new SteamStrategy({
-    returnURL: 'https://dbd-mmr.onrender.com/auth/steam/return',
-    realm: 'https://dbd-mmr.onrender.com/',
+    returnURL: `${APP_URL}/auth/steam/return`,
+    realm: `${APP_URL}/`,
     apiKey: STEAM_API_KEY
   },
   async (identifier, profile, done) => {
@@ -110,33 +121,35 @@ function calculateChange(match) {
 
 // 5. ЭНДПОИНТЫ
 
-// Раздача статических файлов из корня
-app.use(express.static(__dirname));
-
-// Все остальные запросы, которые не попали в API, отправляют index.html (для SPA)
-app.get('/index.html', (req, res) => {
+app.get(['/','/index.html'], (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.get('/healthz', (req, res) => {
+  const ready = mongoose.connection.readyState === 1;
+  res.status(ready ? 200 : 503).json({ status: ready ? 'ok' : 'unavailable' });
 });
 
 // Авторизация Steam
 app.get('/auth/steam', passport.authenticate('steam'));
 
 app.get('/auth/steam/return', passport.authenticate('steam', { failureRedirect: '/' }), (req, res) => {
-  res.redirect('https://dbd-mmr.onrender.com'); // Перенаправляем на основной домен
+  res.redirect(APP_URL);
 });
 
 // Выход
 app.get('/auth/logout', (req, res) => {
   req.logout(() => {
-    res.redirect('https://dbd-mmr.onrender.com');
+    res.redirect(APP_URL);
   });
 });
 
 // Обновление MMR (теперь может использовать сохраненный токен)
 app.post('/api/user/update', async (req, res) => {
-  // Если пользователь залогинен через Steam, берем его из сессии
-  const user = req.user || await User.findOne({ steamId: req.body.steamId });
-  const rawToken = req.body.token || user?.behaviorToken || '';
+  if (!req.user) return res.status(401).json({ error: 'Сначала войдите через Steam' });
+
+  const user = req.user;
+  const rawToken = req.body.token || user.behaviorToken || '';
   const token = String(rawToken).replace(/^\s*Bearer\s+/i, '').replace(/\s+/g, '');
 
   if (!token) return res.status(400).json({ error: 'Требуется токен Behavior' });
@@ -152,15 +165,19 @@ app.post('/api/user/update', async (req, res) => {
     let totalKillChange = 0;
 
     for (const match of matches) {
-      const matchId = match.id || JSON.stringify(match);
-      const alreadyProcessed = await Match.findOne({ matchId });
+      const sourceMatchId = match.id || JSON.stringify(match);
+      const matchId = `${user.steamId}:${sourceMatchId}`;
+      const alreadyProcessed = await Match.findOne({
+        steamId: user.steamId,
+        matchId: { $in: [matchId, sourceMatchId] }
+      });
       if (!alreadyProcessed) {
         const change = calculateChange(match);
         const isKiller = !!match.playerStat?.killerMatchStatus;
         if (isKiller) totalKillChange += change;
         else totalSurvChange += change;
         await Match.create({
-            steamId: user?.steamId || req.body.steamId,
+            steamId: user.steamId,
             matchId,
             role: isKiller ? 'killer' : 'survivor',
             mmrChange: change,
@@ -193,9 +210,16 @@ app.post('/api/user/update', async (req, res) => {
 
 app.get('/api/leaderboard/:role', async (req, res) => {
   const { role } = req.params;
+  if (role !== 'survivor' && role !== 'killer') {
+    return res.status(400).json({ error: 'Неизвестная роль' });
+  }
   const field = role === 'survivor' ? 'survivorMMR' : 'killerMMR';
   try {
-    const topPlayers = await User.find().sort({ [field]: -1 }).limit(100);
+    const topPlayers = await User.find()
+      .select('steamId nickname survivorMMR killerMMR -_id')
+      .sort({ [field]: -1 })
+      .limit(100)
+      .lean();
     res.json(topPlayers);
   } catch (error) {
     res.status(500).json({ error: 'Ошибка сервера' });
@@ -205,21 +229,22 @@ app.get('/api/leaderboard/:role', async (req, res) => {
 // Текущий пользователь (для фронтенда)
 app.get('/api/me', (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Не авторизован' });
-  res.json(req.user);
+  res.json({
+    steamId: req.user.steamId,
+    nickname: req.user.nickname,
+    survivorMMR: req.user.survivorMMR,
+    killerMMR: req.user.killerMMR,
+    lastUpdate: req.user.lastUpdate
+  });
 });
 
-app.use((req, res, next) => {
-  if (req.method === 'GET' && !req.path.startsWith('/api') && !req.path.startsWith('/auth')) {
-    const filePath = path.join(__dirname, 'index.html');
-    res.sendFile(filePath, (err) => {
-      if (err) {
-        console.error('Ошибка отправки файла:', filePath, err);
-        res.status(404).send('Файл index.html не найден в корне сервера');
-      }
-    });
-  } else {
-    next();
-  }
-});
+async function startServer() {
+  await mongoose.connect(MONGODB_URI);
+  console.log('✅ MongoDB подключена');
+  app.listen(PORT, () => console.log(`🚀 Сервер с поддержкой Steam запущен на порту ${PORT}`));
+}
 
-app.listen(PORT, () => console.log(`🚀 Сервер с поддержкой Steam запущен на порту ${PORT}`));
+startServer().catch(error => {
+  console.error('❌ Не удалось запустить сервер:', error.message);
+  process.exit(1);
+});
