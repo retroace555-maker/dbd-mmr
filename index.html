@@ -161,7 +161,16 @@
                         });
                         this.currentUser.survivorMMR = res.data.survivorMMR;
                         this.currentUser.killerMMR = res.data.killerMMR;
-                        alert('MMR успешно обновлен!');
+                        const { changes, processedMatches } = res.data;
+                        const skippedKillerMatches = res.data.skippedMatches?.killerWithUnknownKills || 0;
+                        const formatChange = value => `${value > 0 ? '+' : ''}${value}`;
+                        alert(
+                            `Обновление завершено. Обработано матчей: ${processedMatches.killer} убийца, ${processedMatches.survivor} выживший.\n` +
+                            `Изменение: убийца ${formatChange(changes.killer)}, выживший ${formatChange(changes.survivor)}.` +
+                            (skippedKillerMatches > 0
+                                ? `\nПропущено матчей убийцы без данных об убийствах: ${skippedKillerMatches}. Они не засчитаны и будут проверены при следующем обновлении.`
+                                : '')
+                        );
                         this.token = '';
                     } catch (e) {
                         alert(e.response?.data?.error || 'Ошибка при обновлении. Проверьте токен.');

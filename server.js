@@ -206,12 +206,6 @@ app.post('/api/user/update', async (req, res) => {
       }
     }
 
-    if (matchesWithUnknownKills > 0) {
-      return res.status(502).json({
-        error: `BHVR не вернул количество убийств для ${matchesWithUnknownKills} матч(ей). MMR не обновлён, чтобы не списать очки ошибочно.`
-      });
-    }
-
     if (matchesToSave.length > 0) {
       await Match.create(matchesToSave);
     }
@@ -225,13 +219,16 @@ app.post('/api/user/update', async (req, res) => {
     }
 
     res.json({
-      message: 'MMR обновлен',
+      message: 'Обновление MMR завершено',
       survivorMMR: user.survivorMMR,
       killerMMR: user.killerMMR,
       changes: { survivor: totalSurvChange, killer: totalKillChange },
       processedMatches: {
         survivor: survivorMatchesProcessed,
         killer: killerMatchesProcessed
+      },
+      skippedMatches: {
+        killerWithUnknownKills: matchesWithUnknownKills
       }
     });
   } catch (error) {
