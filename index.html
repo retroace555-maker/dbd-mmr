@@ -118,42 +118,38 @@
                         <!-- Переключатель способов синхронизации -->
                         <div class="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
                             <button @click="syncTab = 'auto'" :class="syncTab === 'auto' ? 'bg-red-600 text-white' : 'text-slate-400'" class="flex-1 py-2 rounded-lg font-bold text-sm transition">
-                                ⚡ Авто-синхронизация (Рекомендуется)
+                                Быстрое обновление (Кнопка-закладка)
                             </button>
                             <button @click="syncTab = 'manual'" :class="syncTab === 'manual' ? 'bg-slate-800 text-white' : 'text-slate-400'" class="flex-1 py-2 rounded-lg font-bold text-sm transition">
                                 Вручную по токену
                             </button>
                         </div>
 
-                        <!-- ВКЛАДКА 1: АВТО-СИНХРОНИЗАЦИЯ -->
+                        <!-- ВКЛАДКА 1: КНОПКА-ЗАКЛАДКА -->
                         <div v-if="syncTab === 'auto'" class="p-5 bg-slate-800/80 rounded-2xl border border-slate-700 space-y-4">
                             <div class="text-sm text-slate-300 space-y-2">
-                                <p class="font-semibold text-white">Как работает автоматическое обновление без передачи токена BHVR:</p>
+                                <p class="font-semibold text-white">Обновление MMR в 1 клик (без плагинов и поиска токена в F12):</p>
                                 <ol class="list-decimal list-inside space-y-1 text-slate-400">
-                                    <li>Установите расширение <a href="https://www.tampermonkey.net/" target="_blank" class="text-red-400 underline hover:text-red-300">Tampermonkey</a> для вашего браузера.</li>
-                                    <li>Нажмите кнопку <b>«Сгенерировать ключ и скрипт»</b> ниже.</li>
-                                    <li>Скопируйте готовый скрипт, создайте новый скрипт в Tampermonkey и сохраните его (<b>Ctrl+S</b>).</li>
-                                    <li>Теперь каждый раз, когда вы заходите на <a href="https://stats.deadbydaylight.com/match-history" target="_blank" class="text-red-400 underline hover:text-red-300">stats.deadbydaylight.com</a>, ваши новые матчи автоматически отправляются сюда!</li>
+                                    <li>Нажмите <b>«Создать кнопку обновления»</b> ниже.</li>
+                                    <li>Зажмите появившуюся кнопку <b>«Обновить MMR»</b> левой кнопкой мыши и перетащите её на панель закладок браузера (если панель скрыта, нажмите <b>Ctrl+Shift+B</b>).</li>
+                                    <li>Откройте <a href="https://stats.deadbydaylight.com/match-history" target="_blank" class="text-red-400 underline hover:text-red-300">stats.deadbydaylight.com</a> и нажмите на эту закладку — она получит матчи со страницы и отправит их сюда.</li>
                                 </ol>
                             </div>
 
                             <div class="flex gap-3 pt-2">
                                 <button @click="generateSyncKey" :disabled="generatingKey" class="bg-red-600 hover:bg-red-700 px-5 py-2.5 rounded-xl font-bold text-sm transition disabled:opacity-50">
-                                    {{ generatingKey ? 'Генерация...' : (currentUser.hasSyncKey ? 'Перевыпустить ключ синхронизации' : 'Сгенерировать ключ и скрипт') }}
+                                    {{ generatingKey ? 'Создание...' : (currentUser.hasSyncKey ? 'Перевыпустить кнопку обновления' : 'Создать кнопку обновления') }}
                                 </button>
                             </div>
 
                             <div v-if="syncKey" class="mt-4 space-y-3 border-t border-slate-700 pt-4">
-                                <div class="p-3 rounded-lg bg-emerald-950/60 border border-emerald-700 text-xs text-emerald-200">
-                                    ✅ Ваш персональный ключ вшит в скрипт ниже. Сохраните его — при повторном выпуске старый ключ перестанет действовать.
+                                <div class="p-5 rounded-xl bg-slate-950 border border-slate-800 flex flex-col items-center gap-3 text-center">
+                                    <p class="text-xs text-slate-300">Зажмите эту кнопку мышкой и перетащите её на панель закладок браузера:</p>
+                                    <a :href="bookmarkletUrl" @click.prevent="showDragHint" class="bg-red-600 hover:bg-red-500 text-white font-bold px-6 py-3 rounded-xl shadow-lg cursor-grab active:cursor-grabbing border border-red-400 select-none">
+                                        Обновить MMR
+                                    </a>
+                                    <p class="text-xs text-slate-500">При повторном выпуске старая закладка перестанет работать — замените её новой.</p>
                                 </div>
-                                <div class="flex justify-between items-center">
-                                    <span class="text-xs font-bold uppercase text-slate-400">Готовый код для Tampermonkey:</span>
-                                    <button @click="copyUserscript" class="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1.5 rounded-lg font-semibold transition">
-                                        {{ copied ? '✅ Скопировано!' : '📋 Скопировать скрипт' }}
-                                    </button>
-                                </div>
-                                <pre class="bg-slate-950 p-3 rounded-xl border border-slate-800 text-xs text-slate-300 overflow-x-auto max-h-56 select-all">{{ userscriptCode }}</pre>
                             </div>
                         </div>
 
@@ -255,8 +251,7 @@
                     token: '',
                     loading: false,
                     generatingKey: false,
-                    syncKey: '',
-                    copied: false
+                    syncKey: ''
                 }
             },
             computed: {
@@ -264,85 +259,83 @@
                     if (this.matchFilter === 'all') return this.userMatches;
                     return this.userMatches.filter(m => m.role === this.matchFilter);
                 },
-                userscriptCode() {
-                    if (!this.syncKey) return '';
+                bookmarkletUrl() {
+                    if (!this.syncKey) return '#';
                     const origin = window.location.origin;
-                    return `// ==UserScript==
-// @name         DBD MMR Auto-Sync
-// @namespace    ${origin}/
-// @version      1.1
-// @description  Авто-синхронизация истории матчей для ${origin}
-// @match        https://stats.deadbydaylight.com/*
-// @grant        none
-// @run-at       document-start
-// ==/UserScript==
+                    const code = `(async function(){
+                        if(location.hostname !== 'stats.deadbydaylight.com'){
+                            if(confirm('Перейти на сайт статистики Dead by Daylight? Нажмите на эту закладку ещё раз, когда страница откроется.')){
+                                location.href='https://stats.deadbydaylight.com/match-history';
+                            }
+                            return;
+                        }
+                        const badge=document.createElement('div');
+                        badge.style='position:fixed;top:20px;right:20px;z-index:999999;background:#0f172a;color:#fff;padding:16px 24px;border-radius:12px;border:2px solid #ef4444;font-family:sans-serif;font-weight:bold;box-shadow:0 10px 25px rgba(0,0,0,0.5);';
+                        badge.textContent='DBD MMR: Загрузка матчей...';
+                        document.body.appendChild(badge);
 
-(function() {
-  'use strict';
-  const SYNC_KEY = '${this.syncKey}';
-  const BACKEND_URL = '${origin}/api/user/sync-matches';
+                        async function sendMatches(data){
+                            const list=Array.isArray(data)?data:(data?.data||data?.matches||data?.items||[]);
+                            if(!Array.isArray(list)||list.length===0) throw new Error('История матчей не найдена');
+                            const clean=list.map(m=>({
+                                matchStat:{isCustomMatch:m?.matchStat?.isCustomMatch,matchStartTime:m?.matchStat?.matchStartTime,mapName:m?.matchStat?.mapName,map:{name:m?.matchStat?.map?.name}},
+                                playerStat:{playerRole:m?.playerStat?.playerRole,characterName:{id:m?.playerStat?.characterName?.id,name:m?.playerStat?.characterName?.name},playerStatus:{id:m?.playerStat?.playerStatus?.id,name:m?.playerStat?.playerStatus?.name,image:{path:m?.playerStat?.playerStatus?.image?.path}},killerMatchStatus:m?.playerStat?.killerMatchStatus},
+                                opponentStat:Array.isArray(m?.opponentStat)?m.opponentStat.map(o=>({playerRole:o?.playerRole,playerStatus:{id:o?.playerStatus?.id,name:o?.playerStatus?.name,image:{path:o?.playerStatus?.image?.path}}})):[]}));
+                            const syncRes=await fetch('${origin}/api/user/sync-matches',{
+                                method:'POST',
+                                headers:{'Content-Type':'application/json','X-Sync-Key':'${this.syncKey}'},
+                                body:JSON.stringify({matches:clean})
+                            });
+                            const resJson=await syncRes.json();
+                            if(!syncRes.ok) throw new Error(resJson.error||'Ошибка сервера');
+                            badge.style.borderColor='#22c55e';
+                            badge.textContent='Готово! Сурв: '+resJson.survivorMMR+' | Ман: '+resJson.killerMMR+' (Новых матчей: '+(resJson.processedMatches.survivor+resJson.processedMatches.killer)+')';
+                            setTimeout(()=>badge.remove(),6000);
+                        }
 
-  function sanitizeMatches(rawList) {
-    return rawList.map(m => ({
-      matchStat: {
-        isCustomMatch: m?.matchStat?.isCustomMatch,
-        matchStartTime: m?.matchStat?.matchStartTime,
-        mapName: m?.matchStat?.mapName,
-        map: { name: m?.matchStat?.map?.name }
-      },
-      playerStat: {
-        playerRole: m?.playerStat?.playerRole,
-        characterName: {
-          id: m?.playerStat?.characterName?.id,
-          name: m?.playerStat?.characterName?.name
-        },
-        playerStatus: {
-          id: m?.playerStat?.playerStatus?.id,
-          name: m?.playerStat?.playerStatus?.name,
-          image: { path: m?.playerStat?.playerStatus?.image?.path }
-        },
-        killerMatchStatus: m?.playerStat?.killerMatchStatus
-      },
-      opponentStat: Array.isArray(m?.opponentStat)
-        ? m.opponentStat.map(opp => ({
-            playerRole: opp?.playerRole,
-            playerStatus: {
-              id: opp?.playerStatus?.id,
-              name: opp?.playerStatus?.name,
-              image: { path: opp?.playerStatus?.image?.path }
-            }
-          }))
-        : []
-    }));
-  }
+                        let token=null;
+                        for(const storage of [localStorage,sessionStorage]){
+                            for(let i=0;i<storage.length;i++){
+                                const match=String(storage.getItem(storage.key(i))).match(/eyJ[A-Za-z0-9-_]+\\.eyJ[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+/);
+                                if(match){token=match[0];break;}
+                            }
+                            if(token)break;
+                        }
 
-  function sendToMMRServer(data) {
-    const list = Array.isArray(data) ? data : (data?.data || data?.matches || data?.items);
-    if (!Array.isArray(list) || list.length === 0) return;
-
-    fetch(BACKEND_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Sync-Key': SYNC_KEY },
-      body: JSON.stringify({ matches: sanitizeMatches(list) })
-    })
-      .then(r => r.json())
-      .then(res => console.log('[DBD-MMR] Синхронизировано:', res))
-      .catch(err => console.error('[DBD-MMR] Ошибка синхронизации:', err));
-  }
-
-  const origFetch = window.fetch;
-  window.fetch = async function(...args) {
-    const res = await origFetch.apply(this, args);
-    const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
-    if (url.includes('match-history/games/dbd')) {
-      res.clone().json().then(sendToMMRServer).catch(() => {});
-    }
-    return res;
-  };
-})();`;
+                        if(token){
+                            try{
+                                const response=await fetch('https://account-backend.bhvr.com/player-stats/match-history/games/dbd/providers/bhvr?lang=en&limit=100',{
+                                    headers:{'Authorization':'Bearer '+token}
+                                });
+                                if(!response.ok) throw new Error('Статус BHVR: '+response.status);
+                                await sendMatches(await response.json());
+                            }catch(error){
+                                badge.textContent='Ошибка: '+error.message;
+                                setTimeout(()=>badge.remove(),6000);
+                            }
+                        }else{
+                            badge.textContent='Переключите фильтр ролей на странице (Все / Убийца / Выживший), чтобы загрузить матчи...';
+                            const originalFetch=window.fetch;
+                            window.fetch=async function(...args){
+                                const response=await originalFetch.apply(this,args);
+                                const url=typeof args[0]==='string'?args[0]:(args[0]?.url||'');
+                                if(url.includes('match-history/games/dbd')){
+                                    response.clone().json().then(sendMatches).catch(error=>{
+                                        badge.textContent='Ошибка: '+error.message;
+                                        setTimeout(()=>badge.remove(),6000);
+                                    });
+                                }
+                                return response;
+                            };
+                        }
+                    })();`;
+                    return 'javascript:' + encodeURIComponent(code.replace(/\s+/g, ' ').trim());
                 }
             },
             methods: {
+                showDragHint() {
+                    alert('Не нажимайте на кнопку здесь — зажмите её левой кнопкой мыши и перетащите наверх, на панель закладок вашего браузера!');
+                },
                 openProfile() {
                     this.view = 'profile';
                     if (this.currentUser) {
@@ -381,7 +374,6 @@
                 },
                 async generateSyncKey() {
                     this.generatingKey = true;
-                    this.copied = false;
                     try {
                         const res = await axios.post('/api/user/sync-key');
                         this.syncKey = res.data.syncKey;
@@ -390,15 +382,6 @@
                         alert(e.response?.data?.error || 'Не удалось создать ключ синхронизации');
                     } finally {
                         this.generatingKey = false;
-                    }
-                },
-                async copyUserscript() {
-                    try {
-                        await navigator.clipboard.writeText(this.userscriptCode);
-                        this.copied = true;
-                        setTimeout(() => { this.copied = false; }, 3000);
-                    } catch (e) {
-                        alert('Не удалось скопировать автоматически. Выделите код и нажмите Ctrl+C.');
                     }
                 },
                 async updateMMR() {
