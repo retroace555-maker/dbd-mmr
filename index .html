@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DBD MMR | Global Statistics</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; }
+        .dbd-card {
+            background: linear-gradient(145deg, #1e293b, #0f172a);
+            border: 1px solid #334155;
+            transition: all 0.3s ease;
+        }
+        .dbd-card:hover { border-color: #ef4444; transform: translateY(-2px); }
+    </style>
+</head>
+<body class="text-slate-200">
+    <div id="app">
+        <!-- Навигация -->
+        <nav class="bg-slate-900 border-b border-slate-800 p-4 sticky top-0 z-50 shadow-xl">
+            <div class="max-w-6xl mx-auto flex justify-between items-center">
+                <div class="text-2xl font-black italic tracking-tighter text-red-600">DBD <span class="text-white">MMR</span></div>
+
+                <div class="flex gap-6 items-center">
+                    <button @click="view = 'leaderboard'" :class="view === 'leaderboard' ? 'text-red-500' : 'text-slate-400'" class="font-semibold hover:text-white transition">Лидерборд</button>
+                    <button @click="openProfile" :class="view === 'profile' ? 'text-red-500' : 'text-slate-400'" class="font-semibold hover:text-white transition">Профиль</button>
+
+                    <!-- Блок Авторизации -->
+                    <div v-if="!currentUser" class="ml-4">
+                        <a href="/auth/steam" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold text-sm transition flex items-center gap-2">
+                            <img src="https://community.cloudflare.steamstatic.com/public/images/signinwithsteam_english.png" class="h-4" alt="Steam">
+                        </a>
+                    </div>
+                    <div v-else class="ml-4 flex items-center gap-3">
+                        <span class="text-sm font-medium text-slate-300">Привет, <span class="text-white font-bold">{{ currentUser.nickname }}</span></span>
+                        <a href="/auth/logout" class="text-xs text-slate-500 hover:text-red-400 transition underline">Выйти</a>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <main class="max-w-6xl mx-auto p-6">
+            <!-- СТРАНИЦА ЛИДЕРБОРДА -->
+            <div v-if="view === 'leaderboard'" class="space-y-8">
+                <div class="flex justify-between items-end">
+                    <div>
+                        <h1 class="text-4xl font-black uppercase italic">Глобальный Рейтинг</h1>
+                        <p class="text-slate-400">Лучшие игроки по версии DBD MMR</p>
+                    </div>
+                    <div class="flex bg-slate-900 p-1 rounded-xl border border-slate-800">
+                        <button @click="role = 'survivor'" :class="role === 'survivor' ? 'bg-blue-600 text-white' : 'text-slate-400'" class="px-6 py-2 rounded-lg transition font-bold">Сурвы</button>
+                        <button @click="role = 'killer'" :class="role === 'killer' ? 'bg-red-600 text-white' : 'text-slate-400'" class="px-6 py-2 rounded-lg transition font-bold">Маны</button>
+                    </div>
+                </div>
+
+                <div class="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/50 backdrop-blur-md">
+                    <table class="w-full text-left">
+                        <thead class="bg-slate-800 text-slate-300 uppercase text-xs font-bold">
+                            <tr>
+                                <th class="px-6 py-4">Место</th>
+                                <th class="px-6 py-4">Никнейм</th>
+                                <th class="px-6 py-4 text-right">Рейтинг MMR</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800">
+                            <tr v-for="(p, i) in players" :key="p.steamId" class="hover:bg-slate-800/50 transition cursor-default">
+                                <td class="px-6 py-4 font-mono">
+                                    <span v-if="i === 0" class="text-yellow-400 text-xl">🥇</span>
+                                    <span v-else-if="i === 1" class="text-slate-300 text-xl">🥈</span>
+                                    <span v-else-if="i === 2" class="text-orange-400 text-xl">🥉</span>
+                                    <span v-else>{{ i + 1 }}</span>
+                                </td>
+                                <td class="px-6 py-4 font-semibold">{{ p.nickname }}</td>
+                                <td class="px-6 py-4 text-right font-black" :class="role === 'survivor' ? 'text-blue-400' : 'text-red-400'">
+                                    {{ role === 'survivor' ? p.survivorMMR : p.killerMMR }}
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- СТРАНИЦА ПРОФИЛЯ -->
+            <div v-if="view === 'profile'" class="max-w-4xl mx-auto space-y-8">
+                <div v-if="!currentUser" class="bg-blue-900/30 p-6 rounded-2xl border border-blue-800 text-center">
+                    <p class="text-blue-200 mb-4">Пожалуйста, авторизуйтесь через Steam, чтобы управлять своим профилем</p>
+                    <a href="/auth/steam" class="inline-block bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-bold transition">Войти через Steam</a>
+                </div>
+
+                <div v-else class="space-y-8">
+                    <!-- Основной блок профиля -->
+                    <div class="bg-slate-900 p-8 rounded-3xl border border-slate-800 shadow-2xl space-y-8">
+                        <div class="flex justify-between items-center flex-wrap gap-3">
+                            <h2 class="text-2xl font-bold flex items-center gap-2">
+                                <span class="w-2 h-8 bg-red-600 rounded-full"></span> Профиль: {{ currentUser.nickname }}
+                            </h2>
+                            <span v-if="currentUser.hasSyncKey" class="text-xs bg-emerald-950 text-emerald-300 border border-emerald-700 px-3 py-1 rounded-full font-semibold">
+                                Ключ авто-синхронизации активен
+                            </span>
+                        </div>
+
+                        <!-- Карточки текущего MMR -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div class="dbd-card p-6 rounded-3xl text-center">
+                                <div class="text-slate-500 text-xs uppercase font-black mb-2 tracking-widest">Survivor MMR</div>
+                                <div class="text-5xl font-black text-blue-400">{{ currentUser.survivorMMR || 1000 }}</div>
+                            </div>
+                            <div class="dbd-card p-6 rounded-3xl text-center">
+                                <div class="text-slate-500 text-xs uppercase font-black mb-2 tracking-widest">Killer MMR</div>
+                                <div class="text-5xl font-black text-red-400">{{ currentUser.killerMMR || 1000 }}</div>
+                            </div>
+                        </div>
+
+                        <!-- Переключатель способов синхронизации -->
+                        <div class="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
+                            <button @click="syncTab = 'auto'" :class="syncTab === 'auto' ? 'bg-red-600 text-white' : 'text-slate-400'" class="flex-1 py-2 rounded-lg font-bold text-sm transition">
+                                ⚡ Авто-синхронизация (в разработке)
+                            </button>
+                            <button @click="syncTab = 'manual'" :class="syncTab === 'manual' ? 'bg-slate-800 text-white' : 'text-slate-400'" class="flex-1 py-2 rounded-lg font-bold text-sm transition">
+                                Вручную по токену
+                            </button>
+                        </div>
+
+                        <!-- ВКЛАДКА 1: АВТО-СИНХРОНИЗАЦИЯ -->
+                        <div v-if="syncTab === 'auto'" class="p-5 bg-slate-800/80 rounded-2xl border border-slate-700 space-y-4">
+                            <div class="text-sm text-slate-300 space-y-2">
+                                <p class="font-semibold text-white">Как работает автоматическое обновление без передачи токена BHVR:</p>
+                                <ol class="list-decimal list-inside space-y-1 text-slate-400">
+                                    <li>Установите расширение <a href="https://www.tampermonkey.net/" target="_blank" class="text-red-400 underline hover:text-red-300">Tampermonkey</a> для вашего браузера.</li>
+                                    <li>Нажмите кнопку <b>«Сгенерировать ключ и скрипт»</b> ниже.</li>
+                                    <li>Скопируйте готовый скрипт, создайте новый скрипт в Tampermonkey и сохраните его (<b>Ctrl+S</b>).</li>
+                                    <li>Теперь каждый раз, когда вы заходите на <a href="https://stats.deadbydaylight.com/match-history" target="_blank" class="text-red-400 underline hover:text-red-300">stats.deadbydaylight.com</a>, ваши новые матчи автоматически отправляются сюда!</li>
+                                </ol>
+                            </div>
+
+                            <div class="flex gap-3 pt-2">
+                                <button @click="generateSyncKey" :disabled="generatingKey" class="bg-red-600 hover:bg-red-700 px-5 py-2.5 rounded-xl font-bold text-sm transition disabled:opacity-50">
+                                    {{ generatingKey ? 'Генерация...' : (currentUser.hasSyncKey ? 'Перевыпустить ключ синхронизации' : 'Сгенерировать ключ и скрипт') }}
+                                </button>
+                            </div>
+
+                            <div v-if="syncKey" class="mt-4 space-y-3 border-t border-slate-700 pt-4">
+                                <div class="p-3 rounded-lg bg-emerald-950/60 border border-emerald-700 text-xs text-emerald-200">
+                                    ✅ Ваш персональный ключ вшит в скрипт ниже. Сохраните его — при повторном выпуске старый ключ перестанет действовать.
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span class="text-xs font-bold uppercase text-slate-400">Готовый код для Tampermonkey:</span>
+                                    <button @click="copyUserscript" class="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1.5 rounded-lg font-semibold transition">
+                                        {{ copied ? '✅ Скопировано!' : '📋 Скопировать скрипт' }}
+                                    </button>
+                                </div>
+                                <pre class="bg-slate-950 p-3 rounded-xl border border-slate-800 text-xs text-slate-300 overflow-x-auto max-h-56 select-all">{{ userscriptCode }}</pre>
+                            </div>
+                        </div>
+
+                        <!-- ВКЛАДКА 2: РУЧНОЙ ВВОД ТОКЕНА -->
+                        <div v-if="syncTab === 'manual'" class="p-5 bg-slate-800/80 rounded-2xl border border-slate-700">
+                            <p class="mb-3 rounded-lg border border-amber-700 bg-amber-950/50 p-3 text-xs font-semibold text-amber-200">
+                                Разовый запрос: сервер использует токен только для текущего обновления и не сохраняет его в базе данных.
+                            </p>
+                            <p class="text-sm text-slate-400 mb-3">Вставьте токен авторизации Behavior с сайта статистики (можно с префиксом Bearer):</p>
+                            <form @submit.prevent="updateMMR" class="flex gap-2">
+                                <input v-model="token" class="flex-1 bg-slate-900 border border-slate-700 rounded-lg p-3 focus:ring-2 ring-red-600 outline-none transition" placeholder="Токен Behavior" required>
+                                <button :disabled="loading" class="bg-red-600 hover:bg-red-700 px-6 py-3 rounded-lg font-bold transition disabled:opacity-50">
+                                    {{ loading ? '...' : 'Обновить' }}
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- ТАБЛИЦА ИСТОРИИ МАТЧЕЙ -->
+                    <div class="bg-slate-900 p-8 rounded-3xl border border-slate-800 shadow-2xl space-y-6">
+                        <div class="flex justify-between items-center flex-wrap gap-4">
+                            <div>
+                                <h3 class="text-xl font-bold">Последние сыгранные матчи</h3>
+                                <p class="text-xs text-slate-400">Показаны последние 50 синхронизированных игр</p>
+                            </div>
+
+                            <div class="flex items-center gap-2">
+                                <div class="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-bold">
+                                    <button @click="matchFilter = 'all'" :class="matchFilter === 'all' ? 'bg-slate-800 text-white' : 'text-slate-400'" class="px-3 py-1.5 rounded-lg transition">Все</button>
+                                    <button @click="matchFilter = 'survivor'" :class="matchFilter === 'survivor' ? 'bg-blue-600 text-white' : 'text-slate-400'" class="px-3 py-1.5 rounded-lg transition">Сурвы</button>
+                                    <button @click="matchFilter = 'killer'" :class="matchFilter === 'killer' ? 'bg-red-600 text-white' : 'text-slate-400'" class="px-3 py-1.5 rounded-lg transition">Маны</button>
+                                </div>
+                                <button @click="fetchUserMatches" class="bg-slate-800 hover:bg-slate-700 text-xs px-3 py-2 rounded-xl font-semibold transition">
+                                    🔄 Обновить список
+                                </button>
+                            </div>
+                        </div>
+
+                        <div v-if="filteredMatches.length === 0" class="text-center py-10 text-slate-500 text-sm border border-dashed border-slate-800 rounded-2xl">
+                            Пока нет загруженных матчей. Синхронизируйте профиль выше!
+                        </div>
+
+                        <div v-else class="overflow-x-auto rounded-2xl border border-slate-800">
+                            <table class="w-full text-left text-sm">
+                                <thead class="bg-slate-800 text-slate-300 uppercase text-xs font-bold">
+                                    <tr>
+                                        <th class="px-5 py-3.5">Дата</th>
+                                        <th class="px-5 py-3.5">Роль</th>
+                                        <th class="px-5 py-3.5">Персонаж</th>
+                                        <th class="px-5 py-3.5">Карта</th>
+                                        <th class="px-5 py-3.5">Исход</th>
+                                        <th class="px-5 py-3.5 text-right">MMR</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-800 bg-slate-900/60">
+                                    <tr v-for="(m, idx) in filteredMatches" :key="idx" class="hover:bg-slate-800/40 transition">
+                                        <td class="px-5 py-3.5 text-xs text-slate-400 font-mono whitespace-nowrap">
+                                            {{ formatDate(m.date) }}
+                                        </td>
+                                        <td class="px-5 py-3.5">
+                                            <span :class="m.role === 'killer' ? 'bg-red-950 text-red-300 border-red-800' : 'bg-blue-950 text-blue-300 border-blue-800'" class="text-xs px-2.5 py-1 rounded-full border font-semibold">
+                                                {{ m.role === 'killer' ? 'Убийца' : 'Выживший' }}
+                                            </span>
+                                        </td>
+                                        <td class="px-5 py-3.5 font-semibold text-white">
+                                            {{ m.characterName || m.characterId || '—' }}
+                                        </td>
+                                        <td class="px-5 py-3.5 text-slate-400">
+                                            {{ m.mapName || '—' }}
+                                        </td>
+                                        <td class="px-5 py-3.5 font-medium" :class="m.mmrChange > 0 ? 'text-emerald-400' : 'text-rose-400'">
+                                            {{ m.outcomeText || (m.mmrChange > 0 ? 'Победа' : 'Поражение') }}
+                                        </td>
+                                        <td class="px-5 py-3.5 text-right font-black font-mono text-base" :class="m.mmrChange > 0 ? 'text-emerald-400' : 'text-rose-400'">
+                                            {{ m.mmrChange > 0 ? '+' + m.mmrChange : m.mmrChange }}
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+        createApp({
+            data() {
+                return {
+                    view: 'leaderboard',
+                    role: 'survivor',
+                    syncTab: 'auto',
+                    matchFilter: 'all',
+                    players: [],
+                    userMatches: [],
+                    currentUser: null,
+                    token: '',
+                    loading: false,
+                    generatingKey: false,
+                    syncKey: '',
+                    copied: false
+                }
+            },
+            computed: {
+                filteredMatches() {
+                    if (this.matchFilter === 'all') return this.userMatches;
+                    return this.userMatches.filter(m => m.role === this.matchFilter);
+                },
+                userscriptCode() {
+                    if (!this.syncKey) return '';
+                    const origin = window.location.origin;
+                    return `// ==UserScript==
+// @name         DBD MMR Auto-Sync
+// @namespace    ${origin}/
+// @version      1.1
+// @description  Авто-синхронизация истории матчей для ${origin}
+// @match        https://stats.deadbydaylight.com/*
+// @grant        none
+// @run-at       document-start
+// ==/UserScript==
+
+(function() {
+  'use strict';
+  const SYNC_KEY = '${this.syncKey}';
+  const BACKEND_URL = '${origin}/api/user/sync-matches';
+
+  function sanitizeMatches(rawList) {
+    return rawList.map(m => ({
+      matchStat: {
+        isCustomMatch: m?.matchStat?.isCustomMatch,
+        matchStartTime: m?.matchStat?.matchStartTime,
+        mapName: m?.matchStat?.mapName,
+        map: { name: m?.matchStat?.map?.name }
+      },
+      playerStat: {
+        playerRole: m?.playerStat?.playerRole,
+        characterName: {
+          id: m?.playerStat?.characterName?.id,
+          name: m?.playerStat?.characterName?.name
+        },
+        playerStatus: {
+          id: m?.playerStat?.playerStatus?.id,
+          name: m?.playerStat?.playerStatus?.name,
+          image: { path: m?.playerStat?.playerStatus?.image?.path }
+        },
+        killerMatchStatus: m?.playerStat?.killerMatchStatus
+      },
+      opponentStat: Array.isArray(m?.opponentStat)
+        ? m.opponentStat.map(opp => ({
+            playerRole: opp?.playerRole,
+            playerStatus: {
+              id: opp?.playerStatus?.id,
+              name: opp?.playerStatus?.name,
+              image: { path: opp?.playerStatus?.image?.path }
+            }
+          }))
+        : []
+    }));
+  }
+
+  function sendToMMRServer(data) {
+    const list = Array.isArray(data) ? data : (data?.data || data?.matches || data?.items);
+    if (!Array.isArray(list) || list.length === 0) return;
+
+    fetch(BACKEND_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Sync-Key': SYNC_KEY },
+      body: JSON.stringify({ matches: sanitizeMatches(list) })
+    })
+      .then(r => r.json())
+      .then(res => console.log('[DBD-MMR] Синхронизировано:', res))
+      .catch(err => console.error('[DBD-MMR] Ошибка синхронизации:', err));
+  }
+
+  const origFetch = window.fetch;
+  window.fetch = async function(...args) {
+    const res = await origFetch.apply(this, args);
+    const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+    if (url.includes('match-history/games/dbd')) {
+      res.clone().json().then(sendToMMRServer).catch(() => {});
+    }
+    return res;
+  };
+})();`;
+                }
+            },
+            methods: {
+                openProfile() {
+                    this.view = 'profile';
+                    if (this.currentUser) {
+                        this.fetchUserMatches();
+                    }
+                },
+                formatDate(dateStr) {
+                    if (!dateStr) return '—';
+                    const d = new Date(dateStr);
+                    return d.toLocaleString('ru-RU', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+                },
+                async fetchLeaderboard() {
+                    try {
+                        const res = await axios.get(`/api/leaderboard/${this.role}`);
+                        this.players = res.data;
+                    } catch (e) { console.error('Ошибка загрузки топа'); }
+                },
+                async fetchUserMatches() {
+                    try {
+                        const res = await axios.get('/api/user/matches');
+                        this.userMatches = res.data;
+                    } catch (e) { console.error('Ошибка загрузки матчей'); }
+                },
+                async checkAuth() {
+                    try {
+                        const res = await axios.get('/api/me');
+                        this.currentUser = res.data;
+                        this.fetchUserMatches();
+                    } catch (e) { this.currentUser = null; }
+                },
+                async generateSyncKey() {
+                    this.generatingKey = true;
+                    this.copied = false;
+                    try {
+                        const res = await axios.post('/api/user/sync-key');
+                        this.syncKey = res.data.syncKey;
+                        if (this.currentUser) this.currentUser.hasSyncKey = true;
+                    } catch (e) {
+                        alert(e.response?.data?.error || 'Не удалось создать ключ синхронизации');
+                    } finally {
+                        this.generatingKey = false;
+                    }
+                },
+                async copyUserscript() {
+                    try {
+                        await navigator.clipboard.writeText(this.userscriptCode);
+                        this.copied = true;
+                        setTimeout(() => { this.copied = false; }, 3000);
+                    } catch (e) {
+                        alert('Не удалось скопировать автоматически. Выделите код и нажмите Ctrl+C.');
+                    }
+                },
+                async updateMMR() {
+                    this.loading = true;
+                    try {
+                        const res = await axios.post('/api/user/update', {
+                            token: this.token
+                        });
+                        this.currentUser.survivorMMR = res.data.survivorMMR;
+                        this.currentUser.killerMMR = res.data.killerMMR;
+                        await this.fetchUserMatches();
+                        const { changes, processedMatches } = res.data;
+                        const skippedKillerMatches = res.data.skippedMatches?.killerWithUnknownKills || 0;
+                        const skippedSurvivorMatches = res.data.skippedMatches?.survivorWithUnknownStatus || 0;
+                        const formatChange = value => `${value > 0 ? '+' : ''}${value}`;
+                        alert(
+                            `Обновление завершено. Обработано матчей: ${processedMatches.killer} убийца, ${processedMatches.survivor} выживший.\n` +
+                            `Изменение: убийца ${formatChange(changes.killer)}, выживший ${formatChange(changes.survivor)}.` +
+                            (skippedKillerMatches > 0
+                                ? `\nПропущено матчей убийцы без данных об убийствах: ${skippedKillerMatches}.`
+                                : '') +
+                            (skippedSurvivorMatches > 0
+                                ? `\nПропущено матчей выжившего с неизвестным статусом: ${skippedSurvivorMatches}.`
+                                : '')
+                        );
+                        this.token = '';
+                    } catch (e) {
+                        alert(e.response?.data?.error || 'Ошибка при обновлении. Проверьте токен.');
+                    } finally {
+                        this.loading = false;
+                    }
+                }
+            },
+            mounted() {
+                this.fetchLeaderboard();
+                this.checkAuth();
+            },
+            watch: {
+                role() { this.fetchLeaderboard(); }
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
