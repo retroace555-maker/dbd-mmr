@@ -6,12 +6,13 @@ const SteamStrategy = require('passport-steam').Strategy;
 const session = require('express-session');
 const { MongoStore } = require('connect-mongo');
 const path = require('path');
+const crypto = require('crypto');
 
 const app = express();
 app.set('trust proxy', 1);
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 
-// --- КОНФИГУРАЦИЯ ---
+// --- 1. КОНФИГУРАЦИЯ ---
 const STEAM_API_KEY = process.env.STEAM_API_KEY;
 const SESSION_SECRET = process.env.SESSION_SECRET;
 const { MONGODB_URI } = process.env;
@@ -23,29 +24,33 @@ if (!MONGODB_URI || !STEAM_API_KEY || !SESSION_SECRET) {
   throw new Error('Не заданы обязательные переменные MONGODB_URI, STEAM_API_KEY и SESSION_SECRET');
 }
 
-
-// 2. СХЕМЫ ДАННЫХ
+// --- 2. СХЕМЫ ДАННЫХ ---
 const UserSchema = new mongoose.Schema({
   steamId: { type: String, unique: true, required: true },
   nickname: String,
   survivorMMR: { type: Number, default: 1000 },
   killerMMR: { type: Number, default: 1000 },
   lastUpdate: { type: Date, default: Date.now },
-  behaviorToken: String // Теперь храним токен здесь для авто-обновления
+  syncKeyHash: { type: String, index: true }
 });
 
 const MatchSchema = new mongoose.Schema({
-  steamId: String,
+  steamId: { type: String, index: true },
   matchId: { type: String, unique: true },
-  role: String,
-  mmrChange: Number,
-  date: Date
+  role: String,          // 'survivor' | 'killer'
+  characterId: String,   // Например: 'S28' или 'K27'
+  characterName: String, // Например: 'Mikaela Reid' или 'The Onryō'
+  mapName: String,       // Например: 'Dead Sands'
+  outcomeText: String,   // Например: 'Побег', 'Смерть', '3 убийства'
+  kills: Number,         // 0-4 для убийцы, null для выжившего
+  mmrChange: Number,     // +25, +15, -15, -25
+  date: { type: Date, index: true }
 });
 
 const User = mongoose.model('User', UserSchema);
 const Match = mongoose.model('Match', MatchSchema);
 
-// 3. НАСТРОЙКА STEAM AUTH (Passport.js)
+// --- 3. НАСТРОЙКА STEAM AUTH (Passport.js) ---
 app.use(session({
   secret: SESSION_SECRET,
   resave: false,
@@ -80,6 +85,9 @@ passport.use(new SteamStrategy({
           nickname: profile.displayName
         });
         await user.save();
+      } else if (user.nickname !== profile.displayName) {
+        user.nickname = profile.displayName;
+        await user.save();
       }
       return done(null, user);
     } catch (err) {
@@ -98,38 +106,234 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// 4. ЛОГИКА РАСЧЕТА MMR
+// --- 4. ЛОГИКА РАСЧЕТА MMR ---
 const MMR_CONFIG = {
-  survivor: { escape: 15, death: -15 },
-  killer: { kills4: 25, kills3: 15, kills2: -15, kills1: -25, kills0: -25 }
+  survivor: {
+    escape: 15, // Побег через ворота или люк
+    death: -15  // Смерть, жертвоприношение, сдача или дисконнект
+  },
+  killer: {
+    kills4: 25,  // 4 убитых / ливнувших
+    kills3: 15,  // 3 убитых / ливнувших
+    kills2: -15, // 2 убитых / ливнувших
+    kills1: -25, // 1 убитый / ливнувший
+    kills0: -25  // 0 убитых
+  }
 };
 
-function calculateChange(match) {
-  const p = match.playerStat || {};
-  if (p.killerMatchStatus) {
-    const rawKills = p.killerMatchStatus.kills;
-    if (rawKills === undefined || rawKills === null || rawKills === '') return null;
-    const kills = Number(rawKills);
-    if (!Number.isInteger(kills) || kills < 0) return null;
-    if (kills >= 4) return MMR_CONFIG.killer.kills4;
-    if (kills === 3) return MMR_CONFIG.killer.kills3;
-    if (kills === 2) return MMR_CONFIG.killer.kills2;
-    if (kills === 1) return MMR_CONFIG.killer.kills1;
-    return MMR_CONFIG.killer.kills0;
-  }
-
-  const playerStatus = p.playerStatus;
-  const status = String(
-    typeof playerStatus === 'string' ? playerStatus : playerStatus?.id || ''
-  ).toUpperCase();
-  if (status.includes('ESCAPED')) return MMR_CONFIG.survivor.escape;
-  if (/(SACRIFICED|KILLED|DEAD)/.test(status)) return MMR_CONFIG.survivor.death;
-  return null;
+function isSurvivorEscapeStatus(statusId = '', statusName = '') {
+  const combined = `${statusId} ${statusName}`.toUpperCase();
+  return combined.includes('ESCAPED') || combined.includes('ESCAPE');
 }
 
-// 5. ЭНДПОИНТЫ
+function isSurvivorDeadOrLeft(statusId = '', statusName = '', imagePath = '') {
+  const combined = `${statusId} ${statusName} ${imagePath}`.toUpperCase();
+  return /(SACRIFICED|KILLED|DEAD|MORI|BLEEDOUT|BLEED_OUT|SURRENDER|DISCONNECTED|DC|QUIT|LEFT|LOSS)/.test(combined);
+}
 
-app.get(['/','/index.html'], (req, res) => {
+function formatKillsText(kills) {
+  if (kills === 1) return '1 убийство';
+  if (kills >= 2 && kills <= 4) return `${kills} убийства`;
+  return '0 убийств';
+}
+
+function calculateChange(match) {
+  if (match?.matchStat?.isCustomMatch === true) {
+    return { isCustom: true, isKiller: false, change: null, kills: null, outcomeText: null };
+  }
+
+  const p = match?.playerStat || {};
+  const isKiller = p.playerRole === 'VE_Slasher' || !!p.killerMatchStatus;
+
+  // 1. РАСЧЕТ ДЛЯ УБИЙЦЫ
+  if (isKiller) {
+    const opponents = Array.isArray(match.opponentStat) ? match.opponentStat : [];
+    if (opponents.length === 0) {
+      return { isCustom: false, isKiller: true, change: null, kills: null, outcomeText: null };
+    }
+
+    let kills = 0;
+    for (const opp of opponents) {
+      if (opp.playerRole === 'VE_Camper' || !opp.playerRole) {
+        const sId = opp.playerStatus?.id || '';
+        const sName = opp.playerStatus?.name || '';
+        const sImg = opp.playerStatus?.image?.path || '';
+
+        if (!isSurvivorEscapeStatus(sId, sName) && (isSurvivorDeadOrLeft(sId, sName, sImg) || !sId)) {
+          kills++;
+        }
+      }
+    }
+
+    const safeKills = Math.min(kills, 4);
+    let change = MMR_CONFIG.killer.kills0;
+    if (safeKills >= 4) change = MMR_CONFIG.killer.kills4;
+    else if (safeKills === 3) change = MMR_CONFIG.killer.kills3;
+    else if (safeKills === 2) change = MMR_CONFIG.killer.kills2;
+    else if (safeKills === 1) change = MMR_CONFIG.killer.kills1;
+
+    return {
+      isCustom: false,
+      isKiller: true,
+      change,
+      kills: safeKills,
+      outcomeText: formatKillsText(safeKills)
+    };
+  }
+
+  // 2. РАСЧЕТ ДЛЯ ВЫЖИВШЕГО
+  const sId = String(p.playerStatus?.id || '');
+  const sName = String(p.playerStatus?.name || '');
+  const sImg = String(p.playerStatus?.image?.path || '');
+
+  if (isSurvivorEscapeStatus(sId, sName)) {
+    return {
+      isCustom: false,
+      isKiller: false,
+      change: MMR_CONFIG.survivor.escape,
+      kills: null,
+      outcomeText: 'Побег'
+    };
+  }
+
+  if (isSurvivorDeadOrLeft(sId, sName, sImg)) {
+    const isDC = /(DISCONNECTED|DC|QUIT|LEFT|SURRENDER)/.test(`${sId} ${sName} ${sImg}`.toUpperCase());
+    return {
+      isCustom: false,
+      isKiller: false,
+      change: MMR_CONFIG.survivor.death,
+      kills: null,
+      outcomeText: isDC ? 'Покинул матч / Сдался' : 'Смерть'
+    };
+  }
+
+  return { isCustom: false, isKiller: false, change: null, kills: null, outcomeText: null };
+}
+
+function hashSyncKey(key) {
+  return crypto.createHash('sha256').update(String(key)).digest('hex');
+}
+
+async function processMatchesForUser(user, rawMatches) {
+  let totalSurvChange = 0;
+  let totalKillChange = 0;
+  let survivorMatchesProcessed = 0;
+  let killerMatchesProcessed = 0;
+  let matchesWithUnknownKills = 0;
+  let survivorMatchesWithUnknownStatus = 0;
+  const matchesToSave = [];
+  const seenInBatch = new Set();
+
+  const safeMatches = rawMatches.slice(0, 100);
+
+  for (const match of safeMatches) {
+    const startTime = Number(match?.matchStat?.matchStartTime);
+    const charId = String(match?.playerStat?.characterName?.id || match?.playerStat?.playerRole || '').slice(0, 32);
+    const charName = String(match?.playerStat?.characterName?.name || charId || 'Неизвестный').slice(0, 64);
+    const mapName = String(match?.matchStat?.map?.name || match?.matchStat?.mapName || '').slice(0, 64);
+
+    const sourceMatchId = match.id || (Number.isInteger(startTime) && startTime > 1598918400
+      ? `${startTime}_${charId}`
+      : null);
+
+    if (!sourceMatchId) continue;
+
+    const matchId = `${user.steamId}:${sourceMatchId}`;
+    if (seenInBatch.has(matchId)) continue;
+    seenInBatch.add(matchId);
+
+    const alreadyProcessed = await Match.findOne({
+      steamId: user.steamId,
+      matchId: { $in: [matchId, sourceMatchId] }
+    });
+
+    if (!alreadyProcessed) {
+      const { isCustom, isKiller, change, kills, outcomeText } = calculateChange(match);
+      if (isCustom) continue;
+
+      if (isKiller && change === null) {
+        matchesWithUnknownKills++;
+        continue;
+      }
+      if (!isKiller && change === null) {
+        survivorMatchesWithUnknownStatus++;
+        continue;
+      }
+
+      matchesToSave.push({
+        steamId: user.steamId,
+        matchId,
+        role: isKiller ? 'killer' : 'survivor',
+        characterId: charId,
+        characterName: charName,
+        mapName,
+        outcomeText,
+        kills,
+        mmrChange: change,
+        date: Number.isInteger(startTime) ? new Date(startTime * 1000) : new Date()
+      });
+
+      if (isKiller) {
+        totalKillChange += change;
+        killerMatchesProcessed++;
+      } else {
+        totalSurvChange += change;
+        survivorMatchesProcessed++;
+      }
+    }
+  }
+
+  let updatedUser = user;
+  if (matchesToSave.length > 0) {
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        await Match.insertMany(matchesToSave, { ordered: true, session });
+        const updateResult = await User.updateOne(
+          { _id: user._id },
+          {
+            $inc: {
+              survivorMMR: totalSurvChange,
+              killerMMR: totalKillChange
+            },
+            $set: { lastUpdate: new Date() }
+          },
+          { session }
+        );
+        if (updateResult.matchedCount !== 1) {
+          throw new Error('Пользователь не найден при сохранении MMR');
+        }
+      });
+    } finally {
+      await session.endSession();
+    }
+
+    updatedUser = await User.findById(user._id)
+      .select('survivorMMR killerMMR')
+      .lean();
+    if (!updatedUser) {
+      throw new Error('Не удалось загрузить обновленный профиль пользователя');
+    }
+  }
+
+  return {
+    survivorMMR: updatedUser.survivorMMR,
+    killerMMR: updatedUser.killerMMR,
+    changes: { survivor: totalSurvChange, killer: totalKillChange },
+    processedMatches: {
+      survivor: survivorMatchesProcessed,
+      killer: killerMatchesProcessed
+    },
+    skippedMatches: {
+      killerWithUnknownKills: matchesWithUnknownKills,
+      survivorWithUnknownStatus: survivorMatchesWithUnknownStatus
+    }
+  };
+}
+
+// --- 5. ЭНДПОИНТЫ ---
+
+app.get(['/', '/index.html'], (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
@@ -138,26 +342,85 @@ app.get('/healthz', (req, res) => {
   res.status(ready ? 200 : 503).json({ status: ready ? 'ok' : 'unavailable' });
 });
 
-// Авторизация Steam
 app.get('/auth/steam', passport.authenticate('steam'));
 
 app.get('/auth/steam/return', passport.authenticate('steam', { failureRedirect: '/' }), (req, res) => {
   res.redirect(APP_URL);
 });
 
-// Выход
 app.get('/auth/logout', (req, res) => {
   req.logout(() => {
     res.redirect(APP_URL);
   });
 });
 
-// Обновление MMR (теперь может использовать сохраненный токен)
+// Получение последних 50 матчей текущего пользователя
+app.get('/api/user/matches', async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Не авторизован' });
+  try {
+    const matches = await Match.find({ steamId: req.user.steamId })
+      .sort({ date: -1 })
+      .limit(50)
+      .select('role characterId characterName mapName outcomeText kills mmrChange date -_id')
+      .lean();
+    res.json(matches);
+  } catch (error) {
+    res.status(500).json({ error: 'Не удалось загрузить историю матчей' });
+  }
+});
+
+// Генерация ключа для авто-синхронизации из браузера
+app.post('/api/user/sync-key', async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Сначала войдите через Steam' });
+
+  const rawKey = `dbd_${crypto.randomBytes(24).toString('hex')}`;
+  req.user.syncKeyHash = hashSyncKey(rawKey);
+  await req.user.save();
+
+  res.json({ syncKey: rawKey });
+});
+
+// Авто-синхронизация со страницы stats.deadbydaylight.com
+app.options('/api/user/sync-matches', (req, res) => {
+  res.header('Access-Control-Allow-Origin', 'https://stats.deadbydaylight.com');
+  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-Sync-Key');
+  res.sendStatus(204);
+});
+
+app.post('/api/user/sync-matches', async (req, res) => {
+  res.header('Access-Control-Allow-Origin', 'https://stats.deadbydaylight.com');
+
+  const syncKey = req.headers['x-sync-key'];
+  if (!syncKey || typeof syncKey !== 'string' || syncKey.length < 20) {
+    return res.status(401).json({ error: 'Отсутствует или неверный ключ синхронизации' });
+  }
+
+  try {
+    const user = await User.findOne({ syncKeyHash: hashSyncKey(syncKey) });
+    if (!user) {
+      return res.status(401).json({ error: 'Ключ синхронизации недействителен или был перевыпущен' });
+    }
+
+    const rawMatches = req.body?.matches;
+    if (!Array.isArray(rawMatches)) {
+      return res.status(400).json({ error: 'Ожидался массив matches' });
+    }
+
+    const result = await processMatchesForUser(user, rawMatches);
+    res.json({ message: 'Авто-синхронизация завершена', ...result });
+  } catch (error) {
+    console.error('Ошибка синхронизации:', error.message);
+    res.status(500).json({ error: 'Ошибка сервера при синхронизации' });
+  }
+});
+
+// Ручное обновление по токену
 app.post('/api/user/update', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Сначала войдите через Steam' });
 
   const user = req.user;
-  const rawToken = req.body.token || user.behaviorToken || '';
+  const rawToken = req.body.token || '';
   const token = String(rawToken).replace(/^\s*Bearer\s+/i, '').replace(/\s+/g, '');
 
   if (!token) return res.status(400).json({ error: 'Требуется токен Behavior' });
@@ -168,84 +431,29 @@ app.post('/api/user/update', async (req, res) => {
       headers: { 'authorization': `Bearer ${token}`, 'Referer': 'https://stats.deadbydaylight.com/' }
     });
 
-    const matches = response.data;
+    const rawData = response.data;
+    const matches = Array.isArray(rawData)
+      ? rawData
+      : (rawData?.data || rawData?.matches || rawData?.items || null);
+
     if (!Array.isArray(matches)) {
       return res.status(502).json({ error: 'BHVR вернул историю матчей в неожиданном формате.' });
     }
 
-    let totalSurvChange = 0;
-    let totalKillChange = 0;
-    let survivorMatchesProcessed = 0;
-    let killerMatchesProcessed = 0;
-    let matchesWithUnknownKills = 0;
-    let survivorMatchesWithUnknownStatus = 0;
-    const matchesToSave = [];
-
-    for (const match of matches) {
-      const sourceMatchId = match.id || JSON.stringify(match);
-      const matchId = `${user.steamId}:${sourceMatchId}`;
-      const alreadyProcessed = await Match.findOne({
-        steamId: user.steamId,
-        matchId: { $in: [matchId, sourceMatchId] }
+    try {
+      const result = await processMatchesForUser(user, matches);
+      res.json({
+        message: 'Обновление MMR завершено',
+        ...result
       });
-      if (!alreadyProcessed) {
-        const change = calculateChange(match);
-        const isKiller = !!match.playerStat?.killerMatchStatus;
-        if (isKiller && change === null) {
-          matchesWithUnknownKills++;
-          continue;
-        }
-        if (!isKiller && change === null) {
-          survivorMatchesWithUnknownStatus++;
-          continue;
-        }
-        matchesToSave.push({
-            steamId: user.steamId,
-            matchId,
-            role: isKiller ? 'killer' : 'survivor',
-            mmrChange: change,
-            date: new Date()
-        });
-        if (isKiller) {
-          totalKillChange += change;
-          killerMatchesProcessed++;
-        } else {
-          totalSurvChange += change;
-          survivorMatchesProcessed++;
-        }
-      }
+    } catch (error) {
+      console.error('Ошибка сохранения истории матчей:', error.message);
+      res.status(500).json({ error: 'Не удалось сохранить историю матчей' });
     }
-
-    if (matchesToSave.length > 0) {
-      await Match.create(matchesToSave);
-    }
-
-    if (user) {
-      user.behaviorToken = token;
-        user.survivorMMR += totalSurvChange;
-        user.killerMMR += totalKillChange;
-        user.lastUpdate = new Date();
-        await user.save();
-    }
-
-    res.json({
-      message: 'Обновление MMR завершено',
-      survivorMMR: user.survivorMMR,
-      killerMMR: user.killerMMR,
-      changes: { survivor: totalSurvChange, killer: totalKillChange },
-      processedMatches: {
-        survivor: survivorMatchesProcessed,
-        killer: killerMatchesProcessed
-      },
-      skippedMatches: {
-        killerWithUnknownKills: matchesWithUnknownKills,
-        survivorWithUnknownStatus: survivorMatchesWithUnknownStatus
-      }
-    });
   } catch (error) {
     const bhvrStatus = error.response?.status;
     if (bhvrStatus === 401) {
-      return res.status(401).json({ error: 'BHVR отклонил токен: он истек или недействителен. Получите новый токен.' });
+      return res.status(401).json({ error: 'BHVR отклонил токен: он истек или недействителен. Получите новый токен или настройте авто-синхронизацию.' });
     }
     if (bhvrStatus === 403) {
       return res.status(403).json({ error: 'BHVR запретил запрос. Проверьте, что токен получен в аккаунте Behavior.' });
@@ -273,7 +481,6 @@ app.get('/api/leaderboard/:role', async (req, res) => {
   }
 });
 
-// Текущий пользователь (для фронтенда)
 app.get('/api/me', (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Не авторизован' });
   res.json({
@@ -281,7 +488,8 @@ app.get('/api/me', (req, res) => {
     nickname: req.user.nickname,
     survivorMMR: req.user.survivorMMR,
     killerMMR: req.user.killerMMR,
-    lastUpdate: req.user.lastUpdate
+    lastUpdate: req.user.lastUpdate,
+    hasSyncKey: !!req.user.syncKeyHash
   });
 });
 
