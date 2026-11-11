@@ -116,10 +116,15 @@ function calculateChange(match) {
     if (kills === 2) return MMR_CONFIG.killer.kills2;
     if (kills === 1) return MMR_CONFIG.killer.kills1;
     return MMR_CONFIG.killer.kills0;
-  } else {
-    const status = String(p.playerStatus?.id || '').toUpperCase();
-    return status.includes('ESCAPED') ? MMR_CONFIG.survivor.escape : MMR_CONFIG.survivor.death;
   }
+
+  const playerStatus = p.playerStatus;
+  const status = String(
+    typeof playerStatus === 'string' ? playerStatus : playerStatus?.id || ''
+  ).toUpperCase();
+  if (status.includes('ESCAPED')) return MMR_CONFIG.survivor.escape;
+  if (/(SACRIFICED|KILLED|DEAD)/.test(status)) return MMR_CONFIG.survivor.death;
+  return null;
 }
 
 // 5. ЭНДПОИНТЫ
@@ -173,6 +178,7 @@ app.post('/api/user/update', async (req, res) => {
     let survivorMatchesProcessed = 0;
     let killerMatchesProcessed = 0;
     let matchesWithUnknownKills = 0;
+    let survivorMatchesWithUnknownStatus = 0;
     const matchesToSave = [];
 
     for (const match of matches) {
@@ -187,6 +193,10 @@ app.post('/api/user/update', async (req, res) => {
         const isKiller = !!match.playerStat?.killerMatchStatus;
         if (isKiller && change === null) {
           matchesWithUnknownKills++;
+          continue;
+        }
+        if (!isKiller && change === null) {
+          survivorMatchesWithUnknownStatus++;
           continue;
         }
         matchesToSave.push({
@@ -228,7 +238,8 @@ app.post('/api/user/update', async (req, res) => {
         killer: killerMatchesProcessed
       },
       skippedMatches: {
-        killerWithUnknownKills: matchesWithUnknownKills
+        killerWithUnknownKills: matchesWithUnknownKills,
+        survivorWithUnknownStatus: survivorMatchesWithUnknownStatus
       }
     });
   } catch (error) {

@@ -163,12 +163,16 @@
                         this.currentUser.killerMMR = res.data.killerMMR;
                         const { changes, processedMatches } = res.data;
                         const skippedKillerMatches = res.data.skippedMatches?.killerWithUnknownKills || 0;
+                        const skippedSurvivorMatches = res.data.skippedMatches?.survivorWithUnknownStatus || 0;
                         const formatChange = value => `${value > 0 ? '+' : ''}${value}`;
                         alert(
                             `Обновление завершено. Обработано матчей: ${processedMatches.killer} убийца, ${processedMatches.survivor} выживший.\n` +
                             `Изменение: убийца ${formatChange(changes.killer)}, выживший ${formatChange(changes.survivor)}.` +
                             (skippedKillerMatches > 0
                                 ? `\nПропущено матчей убийцы без данных об убийствах: ${skippedKillerMatches}. Они не засчитаны и будут проверены при следующем обновлении.`
+                                : '') +
+                            (skippedSurvivorMatches > 0
+                                ? `\nПропущено матчей выжившего с неизвестным статусом: ${skippedSurvivorMatches}. Они не засчитаны и будут проверены при следующем обновлении.`
                                 : '')
                         );
                         this.token = '';
